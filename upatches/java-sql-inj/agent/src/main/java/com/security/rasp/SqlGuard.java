@@ -15,19 +15,23 @@ import java.util.List;
  * it reports:
  *
  * <ul>
- * <li>a comment, whatever the dialect: {@code --}, {@code #} or
- *     {@code /* ... *}{@code /}; an injected payload ends the query with
- *     one, or uses {@code /**}{@code /} as white space;
+ * <li>a comment, whatever the dialect: {@code --}, {@code #} or a block
+ *     comment anywhere but first or last in the statement, where tracing
+ *     agents and ORMs put theirs; an injected payload ends the query with
+ *     a comment, or uses a block comment as white space;
  * <li>a second statement after a {@code ;};
  * <li>an {@code OR} whose operands are literals that compare true, such as
- *     {@code OR 1=1}, {@code OR 'a'='a'} or {@code OR(2>1)}. An {@code AND}
- *     tautology is left alone: query builders emit {@code AND 1=1}.
+ *     {@code OR 1=1}, {@code OR 'a'='a'}, {@code OR(2>1)} or
+ *     {@code OR TRUE}. An {@code AND} tautology is left alone: query
+ *     builders emit {@code AND 1=1};
+ * <li>a comparison of two string literals that is true, wherever it stands,
+ *     since no application compares two string constants.
  * </ul>
  *
  * <p>This is a mitigation for concatenated SQL, not a parser of any one
  * dialect. A query built with bind parameters carries none of this and
  * passes. It does not see a payload that needs none of the above, such as a
- * {@code UNION SELECT} appended to a numeric condition.
+ * {@code UNION SELECT} appended to a numeric condition with no tautology.
  *
  * <p>The class depends on nothing outside the JDK, so it runs and is tested
  * without the agent.
@@ -84,7 +88,20 @@ public final class SqlGuard {
             } else if (c == '#') {
                 return "comment \"#\"";
             } else if (c == '/' && i + 1 < n && sql.charAt(i + 1) == '*') {
-                return "comment \"/*\"";
+                int end = sql.indexOf("*/", i + 2);
+
+                if (end < 0) {
+                    return "comment \"/*\" that does not end";
+                }
+                end += 2;
+                // Tracing agents, ORMs and sqlcommenter tag a statement with
+                // a block comment at its start or end, and refusing those
+                // would refuse all their traffic. One anywhere else, such
+                // as "x'/**/OR/**/1=1", is how a payload hides white space.
+                if (!out.isEmpty() && !onlyWhitespace(sql, end)) {
+                    return "comment \"/*\" inside the statement";
+                }
+                i = end;
             } else if (c == '\'') {
                 StringBuilder text = new StringBuilder();
 
@@ -126,6 +143,15 @@ public final class SqlGuard {
             }
         }
         return null;
+    }
+
+    private static boolean onlyWhitespace(String sql, int from) {
+        for (int i = from; i < sql.length(); i++) {
+            if (!Character.isWhitespace(sql.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -195,6 +221,14 @@ public final class SqlGuard {
                     && orTautology(tokens, i + 1)) {
                 return "OR with a condition that is always true";
             }
+            // No application compares two string constants; a payload does
+            // to make a WHERE true after a UNION or an AND as well.
+            if (t.kind == Kind.STRING && i + 2 < n
+                    && tokens.get(i + 1).kind == Kind.OP
+                    && tokens.get(i + 2).kind == Kind.STRING
+                    && compares(t, tokens.get(i + 1).text, tokens.get(i + 2))) {
+                return "comparison of two string literals that is always true";
+            }
         }
         return null;
     }
@@ -215,6 +249,12 @@ public final class SqlGuard {
 
         while (i < n && tokens.get(i).kind == Kind.LPAREN) {
             i++;
+        }
+        // OR TRUE, but not OR TRUE = x, which compares something.
+        if (i < n && tokens.get(i).kind == Kind.WORD
+                && tokens.get(i).text.equalsIgnoreCase("true")
+                && (i + 1 >= n || tokens.get(i + 1).kind != Kind.OP)) {
+            return true;
         }
         if (i + 2 >= n) {
             return false;

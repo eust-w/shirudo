@@ -34,6 +34,12 @@ public class SqlGuardTest {
         {true, T + "'admin'#'"},
         {true, T + "'admin' -- '"},
         {true, T + "'a''b' OR 1=1 OR ''='"},
+        {true, "SELECT * FROM users WHERE id = 1 OR TRUE"},
+        {true, "SELECT * FROM users WHERE id = 1 or (true)"},
+        {true, T + "'x' UNION SELECT password, null FROM admins WHERE 'a'='a'"},
+        {true, "SELECT * FROM users WHERE id = 1 AND 'x' = 'x'"},
+        {true, "SELECT * FROM t /* c */ WHERE a = ?"},
+        {true, "SELECT * FROM t WHERE a = ? /* never ends"},
         // Benign: bind parameters, query builders, data that looks like SQL.
         {false, "SELECT * FROM t WHERE a = ? AND 1 = 1"},
         {false, "SELECT * FROM t WHERE 1=1 AND a = ?"},
@@ -51,6 +57,13 @@ public class SqlGuardTest {
         {false, "SELECT * FROM t WHERE color = 'blue' OR color = 'red'"},
         {false, "SELECT * FROM t WHERE a = 1;"},
         {false, "SELECT * FROM t WHERE a = 1 ; ;"},
+        // A block comment first or last is how tracing tools tag a statement.
+        {false, "/* app=shop */ SELECT * FROM t WHERE a = ?"},
+        {false, "SELECT * FROM t WHERE a = ? /*traceparent='00-abc-01'*/"},
+        {false, "/* a */ SELECT * FROM t WHERE a = ? /* b */"},
+        {false, "SELECT * FROM t WHERE a = 1 OR TRUE = b"},
+        {false, "SELECT * FROM t WHERE a IN ('a', 'b')"},
+        {false, "SELECT * FROM t WHERE 'a' = 'b'"},
         {false, "SELECT 1"},
         {false, ""},
         // A literal that never ends is data to its end, not a way out.

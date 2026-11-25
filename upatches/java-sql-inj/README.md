@@ -11,18 +11,22 @@ The check, in `SqlGuard`, is a small SQL lexer that knows string
 literals, quoted identifiers (`"..."`, `` `...` ``, `[...]`) and comments,
 and looks only outside literals. It blocks:
 
-- a comment: `--`, `#` or `/* ... */`;
+- a comment: `--`, `#`, or a `/* ... */` anywhere but first or last in the
+  statement, which is where tracing agents and ORMs put theirs;
 - a second statement after a `;`;
 - an `OR` whose operands are literals that compare true, such as
-  `OR 1=1`, `OR 'a'='a'`, `OR 2>1` or `OR(1=1)`.
+  `OR 1=1`, `OR 'a'='a'`, `OR 2>1`, `OR(1=1)` or `OR TRUE`;
+- a comparison of two string literals that is true, wherever it stands,
+  since no application compares two string constants.
 
 An `AND` tautology passes, since query builders emit `AND 1=1`, and so
 does a pattern inside a literal, such as `'A OR 1=1 sale'`. A statement
 with bind parameters carries none of this. It is an example, not a
 parser of any dialect, and it does not see an injection that uses
-neither, such as a `UNION SELECT` appended to a numeric condition. A
-query that holds a comment on purpose, such as a `/*+ hint */`, is
-blocked too.
+neither, such as a `UNION SELECT` appended to a numeric condition with
+no tautology. A query that holds a comment on purpose inside the
+statement, such as an optimizer hint `/*+ hint */` after `SELECT`, is
+blocked.
 
 The package also ships `vulnerable-app.jar`, a small application that
 concatenates its argument into a query against an in-memory H2
